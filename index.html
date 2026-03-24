@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>NuGet Provenance Attestor</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #0c0e14;
+    --bg-card: #13161f;
+    --bg-card-alt: #181c28;
+    --bg-input: #1a1e2b;
+    --border: #2a2f40;
+    --border-focus: #4a7cff;
+    --text: #c8cdd8;
+    --text-dim: #6b7280;
+    --text-bright: #e8ecf4;
+    --green: #34d399;
+    --green-dim: #064e3b;
+    --green-glow: rgba(52,211,153,0.15);
+    --amber: #fbbf24;
+    --amber-dim: #78350f;
+    --amber-glow: rgba(251,191,36,0.1);
+    --red: #f87171;
+    --red-dim: #7f1d1d;
+    --blue: #60a5fa;
+    --blue-dim: #1e3a5f;
+    --purple: #a78bfa;
+    --mono: 'JetBrains Mono', 'Fira Code', monospace;
+    --sans: 'DM Sans', system-ui, sans-serif;
+    --radius: 8px;
+    --radius-lg: 12px;
+  }
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html { font-size: 15px; }
+  body {
+    font-family: var(--sans);
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    line-height: 1.6;
+  }
+  /* ── Noise overlay ── */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+    pointer-events: none;
+    z-index: 0;
+  }
+  .container {
+    position: relative; z-index: 1;
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 2rem 1.5rem 4rem;
+  }
+  /* ── Header ── */
+  header {
+    text-align: center;
+    margin-bottom: 2.5rem;
+  }
+  header .shield {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 56px; height: 56px;
+    border-radius: 14px;
+    background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+    border: 1px solid var(--border);
+    margin-bottom: 1rem;
+    box-shadow: 0 0 40px rgba(74,124,255,0.08);
+  }
+  header .shield svg { width: 28px; height: 28px; }
+  header h1 {
+    font-family: var(--mono);
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: var(--text-bright);
+    letter-spacing: -0.5px;
+  }
+  header p {
+    color: var(--text-dim);
+    font-size: 0.85rem;
+    margin-top: 0.3rem;
+    max-width: 520px;
+    margin-inline: auto;
+  }
+  /* ── Cards ── */
+  .card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    padding: 1.5rem;
+    margin-bottom: 1rem;
+  }
+  .card-title {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    color: var(--text-dim);
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .card-title .dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: var(--blue);
+  }
+  /* ── Tabs ── */
+  .tabs {
+    display: flex;
+    gap: 2px;
+    margin-bottom: 1.25rem;
+    background: var(--bg);
+    border-radius: var(--radius);
+    padding: 3px;
+  }
+  .tab {
+    flex: 1;
+    padding: 0.6rem 1rem;
+    border: none;
+    background: transparent;
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active {
+    background: var(--bg-card-alt);
+    color: var(--text-bright);
+    box-shadow: 0 1px 3px rgba(0,0,0,0.3);
+  }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+  /* ── Form elements ── */
+  label {
+    display: block;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--text-dim);
+    margin-bottom: 0.4rem;
+  }
+  input[type="text"], input[type="password"], input[type="file"] {
+    width: 100%;
+    padding: 0.7rem 0.9rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-bright);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    transition: border-color 0.2s;
+    outline: none;
+  }
+  input:focus { border-color: var(--border-focus); }
+  input::placeholder { color: var(--text-dim); opacity: 0.6; }
+  .input-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+  .input-group { margin-bottom: 0.75rem; }
+  .drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 2rem;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.25s;
+    position: relative;
+  }
+  .drop-zone:hover, .drop-zone.drag-over {
+    border-color: var(--blue);
+    background: rgba(96,165,250,0.04);
+  }
+  .drop-zone svg { margin-bottom: 0.5rem; opacity: 0.4; }
+  .drop-zone p { color: var(--text-dim); font-size: 0.85rem; }
+  .drop-zone .filename {
+    font-family: var(--mono);
+    font-size: 0.8rem;
+    color: var(--green);
+    margin-top: 0.4rem;
+  }
+  .drop-zone input[type="file"] {
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    cursor: pointer;
+  }
+  /* ── Owner input ── */
+  .owner-row {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+  }
+  .owner-row label small {
+    font-weight: 400;
+    color: var(--text-dim);
+    opacity: 0.7;
+  }
+  /* ── Auth card ── */
+  .auth-row {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+  }
+  .auth-input-wrap {
+    flex: 1;
+    position: relative;
+  }
+  .auth-input-wrap input {
+    padding-right: 2.5rem;
+  }
+  .auth-toggle-vis {
+    position: absolute;
+    right: 0.6rem;
+    top: 50%;
+    transform: translateY(-50%);
+    background: none;
+    border: none;
+    color: var(--text-dim);
+    cursor: pointer;
+    padding: 0.2rem;
+    display: flex;
+    align-items: center;
+  }
+  .auth-toggle-vis:hover { color: var(--text); }
+  .auth-status {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    margin-top: 0.5rem;
+  }
+  .auth-status .status-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+  }
+  .auth-status.authenticated .status-dot { background: var(--green); }
+  .auth-status.authenticated { color: var(--green); }
+  .auth-status.unauthenticated .status-dot { background: var(--text-dim); }
+  .auth-status.unauthenticated { color: var(--text-dim); }
+  .auth-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 0.6rem;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .auth-footer label {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-bottom: 0;
+    cursor: pointer;
+  }
+  .auth-footer label input[type="checkbox"] {
+    width: auto;
+    accent-color: var(--blue);
+  }
+  .auth-footer a {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--blue);
+    text-decoration: none;
+  }
+  .auth-footer a:hover { text-decoration: underline; }
+  /* ── Button ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.75rem 1.5rem;
+    border: none;
+    border-radius: var(--radius);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+    width: 100%;
+    justify-content: center;
+    margin-top: 0.5rem;
+  }
+  .btn-primary {
+    background: linear-gradient(135deg, #4a7cff 0%, #3b5fcc 100%);
+    color: #fff;
+    box-shadow: 0 2px 8px rgba(74,124,255,0.25);
+  }
+  .btn-primary:hover { box-shadow: 0 4px 16px rgba(74,124,255,0.35); transform: translateY(-1px); }
+  .btn-primary:active { transform: translateY(0); }
+  .btn-primary:disabled {
+    opacity: 0.4; cursor: not-allowed;
+    transform: none !important;
+    box-shadow: none !important;
+  }
+  /* ── Log ── */
+  #log-container {
+    display: none;
+    margin-top: 1rem;
+  }
+  #log-container.visible { display: block; }
+  .log {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 1rem;
+    max-height: 420px;
+    overflow-y: auto;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    line-height: 1.7;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .log-line { white-space: pre-wrap; word-break: break-all; }
+  .log-line.info { color: var(--text-dim); }
+  .log-line.step { color: var(--blue); font-weight: 600; }
+  .log-line.success { color: var(--green); }
+  .log-line.warn { color: var(--amber); }
+  .log-line.error { color: var(--red); }
+  .log-line.data { color: var(--purple); }
+  .log-line .ts {
+    color: var(--text-dim);
+    opacity: 0.5;
+    margin-right: 0.5rem;
+    font-size: 0.72rem;
+  }
+  /* ── Report ── */
+  #report-container { display: none; margin-top: 1rem; }
+  #report-container.visible { display: block; }
+  .verdict-card {
+    padding: 1.25rem 1.5rem;
+    border-radius: var(--radius-lg);
+    margin-bottom: 1rem;
+    text-align: center;
+  }
+  .verdict-card.pass {
+    background: linear-gradient(135deg, rgba(52,211,153,0.08) 0%, rgba(52,211,153,0.03) 100%);
+    border: 1px solid rgba(52,211,153,0.25);
+    box-shadow: 0 0 30px var(--green-glow);
+  }
+  .verdict-card.fail {
+    background: linear-gradient(135deg, rgba(248,113,113,0.08) 0%, rgba(248,113,113,0.03) 100%);
+    border: 1px solid rgba(248,113,113,0.25);
+  }
+  .verdict-card.partial {
+    background: linear-gradient(135deg, rgba(251,191,36,0.08) 0%, rgba(251,191,36,0.03) 100%);
+    border: 1px solid rgba(251,191,36,0.25);
+    box-shadow: 0 0 30px var(--amber-glow);
+  }
+  .verdict-detail {
+    font-size: 0.82rem;
+    color: var(--text-dim);
+    margin-top: 0.5rem;
+    font-family: var(--sans);
+  }
+  .verdict-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.55rem 1.4rem;
+    border-radius: 99px;
+    font-family: var(--mono);
+    font-size: 0.95rem;
+    font-weight: 700;
+  }
+  .verdict-badge.pass {
+    background: var(--green-dim);
+    color: var(--green);
+    border: 1px solid rgba(52,211,153,0.25);
+    box-shadow: 0 0 20px var(--green-glow);
+  }
+  .verdict-badge.fail {
+    background: var(--red-dim);
+    color: var(--red);
+    border: 1px solid rgba(248,113,113,0.25);
+  }
+  .verdict-badge.partial {
+    background: var(--amber-dim);
+    color: var(--amber);
+    border: 1px solid rgba(251,191,36,0.25);
+    box-shadow: 0 0 20px var(--amber-glow);
+  }
+  .report-section {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-lg);
+    margin-bottom: 0.75rem;
+    overflow: hidden;
+  }
+  .report-section-header {
+    padding: 0.9rem 1.2rem;
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text-dim);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    background: var(--bg-card-alt);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .report-section-body { padding: 1rem 1.2rem; }
+  .kv-table { width: 100%; }
+  .kv-table tr { border-bottom: 1px solid rgba(42,47,64,0.5); }
+  .kv-table tr:last-child { border-bottom: none; }
+  .kv-table td {
+    padding: 0.5rem 0;
+    vertical-align: top;
+  }
+  .kv-table .kv-key {
+    font-size: 0.78rem;
+    color: var(--text-dim);
+    white-space: nowrap;
+    padding-right: 1.5rem;
+    width: 180px;
+    font-weight: 500;
+  }
+  .kv-table .kv-val {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--text-bright);
+    word-break: break-all;
+  }
+  .kv-val a {
+    color: var(--blue);
+    text-decoration: none;
+  }
+  .kv-val a:hover { text-decoration: underline; }
+  .kv-val .hash {
+    display: inline-block;
+    background: var(--bg);
+    padding: 0.15rem 0.5rem;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    font-size: 0.75rem;
+  }
+  .check-row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.5rem 0;
+    border-bottom: 1px solid rgba(42,47,64,0.5);
+    font-size: 0.85rem;
+  }
+  .check-row:last-child { border-bottom: none; }
+  .check-icon { flex-shrink: 0; margin-top: 2px; }
+  .check-label { color: var(--text); }
+  .check-detail {
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    margin-top: 0.15rem;
+  }
+  .file-list {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 0.25rem 1rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+  }
+  .file-list .fname { color: var(--text); }
+  .file-list .fsize { color: var(--text-dim); text-align: right; }
+  .file-list .fname.sig-file { color: var(--amber); text-decoration: line-through; }
+  /* ── Spinner ── */
+  .spinner {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.6s linear infinite;
+    vertical-align: middle;
+    margin-right: 0.4rem;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* ── Responsive ── */
+  @media (max-width: 640px) {
+    .input-row { grid-template-columns: 1fr; }
+    .kv-table .kv-key { width: auto; display: block; padding-right: 0; }
+    .kv-table .kv-val { display: block; }
+    .kv-table tr { display: block; padding: 0.3rem 0; }
+  }
+  /* ── Attestation link card ── */
+  .attest-link {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.75rem 1rem;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    margin-top: 0.5rem;
+    text-decoration: none;
+    transition: border-color 0.2s;
+  }
+  .attest-link:hover { border-color: var(--blue); }
+  .attest-link .al-icon { flex-shrink: 0; }
+  .attest-link .al-text {
+    font-family: var(--mono);
+    font-size: 0.78rem;
+    color: var(--blue);
+  }
+  .attest-link .al-sub {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    font-family: var(--sans);
+  }
+  /* ── Predicate JSON ── */
+  .json-block {
+    background: #0a0c10;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.75rem 1rem;
+    margin-top: 0.5rem;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    line-height: 1.6;
+    color: var(--text);
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  .collapsible-toggle {
+    cursor: pointer;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    color: var(--blue);
+    background: none;
+    border: none;
+    padding: 0.3rem 0;
+  }
+  .collapsible-toggle:hover { color: var(--text-bright); }
+  .collapsible-content { display: none; }
+  .collapsible-content.open { display: block; }
+  /* ── Autocomplete ── */
+  .ac-wrap {
+    position: relative;
+  }
+  .ac-list {
+    position: absolute;
+    top: 100%;
+    left: 0; right: 0;
+    z-index: 20;
+    background: var(--bg-card-alt);
+    border: 1px solid var(--border);
+    border-top: none;
+    border-radius: 0 0 var(--radius) var(--radius);
+    max-height: 240px;
+    overflow-y: auto;
+    display: none;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border) transparent;
+  }
+  .ac-list.open { display: block; }
+  .ac-item {
+    padding: 0.5rem 0.9rem;
+    font-family: var(--mono);
+    font-size: 0.82rem;
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .ac-item:hover, .ac-item.active {
+    background: var(--bg-input);
+    color: var(--text-bright);
+  }
+  .ac-item .ac-owner {
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-left: auto;
+  }
+  .ac-spinner {
+    position: absolute;
+    right: 0.7rem;
+    top: 50%;
+    transform: translateY(-50%);
+  }
+  /* ── Version select ── */
+  .ver-wrap {
+    position: relative;
+  }
+  select {
+    width: 100%;
+    padding: 0.7rem 0.9rem;
+    padding-right: 2rem;
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    color: var(--text-bright);
+    font-family: var(--mono);
+    font-size: 0.85rem;
+    outline: none;
+    appearance: none;
+    cursor: pointer;
+    transition: border-color 0.2s;
+  }
+  select:focus { border-color: var(--border-focus); }
+  select:disabled { opacity: 0.5; cursor: not-allowed; }
+  .ver-wrap::after {
+    content: '▾';
+    position: absolute;
+    right: 0.8rem;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--text-dim);
+    font-size: 0.8rem;
+    pointer-events: none;
+  }
+  .ver-badge {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text-dim);
+    margin-top: 0.3rem;
+  }
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <div class="shield">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#60a5fa" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7l-9-5z"/>
+        <path d="M9 12l2 2 4-4"/>
+      </svg>
+    </div>
+    <h1>NuGet Provenance Attestor</h1>
+    <p>Verify GitHub build provenance attestations for NuGet packages. Removes the nuget.org repository signature, recomputes the digest, and queries GitHub's attestation API.</p>
+  </header>
+
+  <!-- Auth Card -->
+  <div class="card">
+    <div class="card-title"><span class="dot" style="background:var(--green)"></span>GitHub Authentication</div>
+    <div class="auth-row">
+      <div class="auth-input-wrap">
+        <input type="password" id="gh-token" placeholder="ghp_… or github_pat_…" autocomplete="off" spellcheck="false" oninput="updateAuthStatus()">
+        <button class="auth-toggle-vis" onclick="toggleTokenVis()" title="Toggle visibility">
+          <svg id="eye-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+        </button>
+      </div>
+    </div>
+    <div class="auth-footer">
+      <label><input type="checkbox" id="remember-token" onchange="handleRememberChange()"> Remember in this browser</label>
+      <div id="auth-status" class="auth-status unauthenticated"><span class="status-dot"></span> no token</div>
+    </div>
+    <div style="margin-top:0.5rem; font-size:0.75rem; color:var(--text-dim); line-height:1.6">
+      The attestation API requires authentication.
+      <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" style="color:var(--blue); text-decoration:none">Create a fine-grained PAT</a> with <strong style="color:var(--text)">Public Repositories (read-only)</strong> access — no other permissions needed. Token stays in your browser.
+    </div>
+  </div>
+
+  <!-- Input Card -->
+  <div class="card">
+    <div class="card-title"><span class="dot"></span>Package Source</div>
+    <div class="tabs">
+      <button class="tab" data-tab="upload" onclick="switchTab('upload')">Upload .nupkg</button>
+      <button class="tab active" data-tab="fetch" onclick="switchTab('fetch')">Fetch from NuGet.org</button>
+    </div>
+
+    <div id="panel-upload" class="tab-panel">
+      <div class="drop-zone" id="drop-zone">
+        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+        <p>Drop a <strong>.nupkg</strong> file here or click to browse</p>
+        <div class="filename" id="upload-filename"></div>
+        <input type="file" accept=".nupkg" id="file-input" onchange="handleFileSelect(this)">
+      </div>
+    </div>
+
+    <div id="panel-fetch" class="tab-panel active">
+      <div class="input-row">
+        <div class="ac-wrap" id="ac-wrap">
+          <label for="pkg-id">Package ID</label>
+          <input type="text" id="pkg-id" placeholder="Start typing…" autocomplete="off" oninput="onPkgIdInput()" onkeydown="onPkgIdKey(event)" onfocus="showAcList()" onblur="setTimeout(hideAcList,200)">
+          <span class="ac-spinner" id="ac-spinner" style="display:none"><span class="spinner"></span></span>
+          <div class="ac-list" id="ac-list"></div>
+        </div>
+        <div>
+          <label for="pkg-ver">Version</label>
+          <div class="ver-wrap">
+            <select id="pkg-ver" disabled>
+              <option value="">— select package first —</option>
+            </select>
+          </div>
+          <div class="ver-badge" id="ver-badge"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="owner-row">
+      <label for="gh-owner">GitHub Owner <small>— auto-detected from .nuspec, or enter manually (user or org)</small></label>
+      <input type="text" id="gh-owner" placeholder="e.g. georg-jung">
+    </div>
+
+    <button class="btn btn-primary" id="btn-verify" onclick="runVerification()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg>
+      Verify Provenance
+    </button>
+  </div>
+
+  <!-- Report (verdict + details) -->
+  <div id="report-container"></div>
+
+  <!-- Log Card (debug) -->
+  <div id="log-container">
+    <div class="card">
+      <div class="card-title"><span class="dot" style="background:var(--amber)"></span>Verification Log</div>
+      <div class="log" id="log"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─── State ───
+let uploadedFile = null;
+
+// ─── Auth ───
+function getToken() {
+  return document.getElementById('gh-token').value.trim();
+}
+function updateAuthStatus() {
+  const token = getToken();
+  const el = document.getElementById('auth-status');
+  if (token) {
+    el.className = 'auth-status authenticated';
+    el.innerHTML = '<span class="status-dot"></span> token set';
+  } else {
+    el.className = 'auth-status unauthenticated';
+    el.innerHTML = '<span class="status-dot"></span> no token';
+  }
+  if (document.getElementById('remember-token').checked && token) {
+    try { localStorage.setItem('gh_pat', token); } catch {}
+  }
+}
+function toggleTokenVis() {
+  const inp = document.getElementById('gh-token');
+  inp.type = inp.type === 'password' ? 'text' : 'password';
+}
+function handleRememberChange() {
+  const cb = document.getElementById('remember-token');
+  if (cb.checked) {
+    const token = getToken();
+    if (token) try { localStorage.setItem('gh_pat', token); } catch {}
+  } else {
+    try { localStorage.removeItem('gh_pat'); } catch {}
+  }
+}
+// Restore on load
+(function restoreToken() {
+  try {
+    const saved = localStorage.getItem('gh_pat');
+    if (saved) {
+      document.getElementById('gh-token').value = saved;
+      document.getElementById('remember-token').checked = true;
+      updateAuthStatus();
+    }
+  } catch {}
+})();
+
+// ─── Package Autocomplete ───
+let acDebounce = null;
+let acActiveIdx = -1;
+let acItems = [];
+
+async function searchPackages(query) {
+  const url = `https://azuresearch-usnc.nuget.org/autocomplete?q=${encodeURIComponent(query)}&take=12`;
+  const resp = await fetch(url);
+  if (!resp.ok) return [];
+  const data = await resp.json();
+  return data.data || [];
+}
+
+function onPkgIdInput() {
+  const q = document.getElementById('pkg-id').value.trim();
+  acActiveIdx = -1;
+  if (q.length < 2) { hideAcList(); return; }
+  document.getElementById('ac-spinner').style.display = '';
+  clearTimeout(acDebounce);
+  acDebounce = setTimeout(async () => {
+    try {
+      acItems = await searchPackages(q);
+      renderAcList();
+    } catch { hideAcList(); }
+    document.getElementById('ac-spinner').style.display = 'none';
+  }, 250);
+}
+
+function renderAcList() {
+  const list = document.getElementById('ac-list');
+  if (!acItems.length) { hideAcList(); return; }
+  list.innerHTML = acItems.map((id, i) =>
+    `<div class="ac-item${i === acActiveIdx ? ' active' : ''}" onmousedown="selectPackage('${escHtml(id)}')">${escHtml(id)}</div>`
+  ).join('');
+  list.classList.add('open');
+}
+
+function showAcList() {
+  if (acItems.length && document.getElementById('pkg-id').value.trim().length >= 2) {
+    document.getElementById('ac-list').classList.add('open');
+  }
+}
+
+function hideAcList() {
+  document.getElementById('ac-list').classList.remove('open');
+}
+
+function onPkgIdKey(e) {
+  const list = document.getElementById('ac-list');
+  if (!list.classList.contains('open') || !acItems.length) return;
+  if (e.key === 'ArrowDown') {
+    e.preventDefault();
+    acActiveIdx = Math.min(acActiveIdx + 1, acItems.length - 1);
+    renderAcList();
+  } else if (e.key === 'ArrowUp') {
+    e.preventDefault();
+    acActiveIdx = Math.max(acActiveIdx - 1, 0);
+    renderAcList();
+  } else if (e.key === 'Enter' && acActiveIdx >= 0) {
+    e.preventDefault();
+    selectPackage(acItems[acActiveIdx]);
+  } else if (e.key === 'Escape') {
+    hideAcList();
+  }
+}
+
+async function selectPackage(pkgId) {
+  document.getElementById('pkg-id').value = pkgId;
+  hideAcList();
+  acItems = [];
+  await loadVersions(pkgId);
+}
+
+async function loadVersions(pkgId) {
+  const sel = document.getElementById('pkg-ver');
+  const badge = document.getElementById('ver-badge');
+  sel.disabled = true;
+  sel.innerHTML = '<option value="">loading…</option>';
+  badge.textContent = '';
+  try {
+    const versions = await fetchVersions(pkgId);
+    // Reverse so latest is first
+    const desc = [...versions].reverse();
+    sel.innerHTML = '<option value="">latest (' + escHtml(desc[0]) + ')</option>' +
+      desc.map(v => `<option value="${escHtml(v)}">${escHtml(v)}</option>`).join('');
+    sel.disabled = false;
+    badge.textContent = `${versions.length} version${versions.length !== 1 ? 's' : ''} available`;
+  } catch (err) {
+    sel.innerHTML = '<option value="">failed to load</option>';
+    badge.textContent = err.message;
+  }
+}
+
+// ─── Tab Switching ───
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.toggle('active', t.dataset.tab === tab));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('active', p.id === 'panel-' + tab));
+}
+
+// ─── File Handling ───
+const dropZone = document.getElementById('drop-zone');
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag-over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag-over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag-over');
+  if (e.dataTransfer.files.length) {
+    uploadedFile = e.dataTransfer.files[0];
+    document.getElementById('upload-filename').textContent = uploadedFile.name;
+  }
+});
+function handleFileSelect(input) {
+  if (input.files.length) {
+    uploadedFile = input.files[0];
+    document.getElementById('upload-filename').textContent = uploadedFile.name;
+  }
+}
+
+// ─── Logging ───
+const logEl = document.getElementById('log');
+function log(msg, cls = 'info') {
+  const ts = new Date().toISOString().slice(11, 23);
+  const line = document.createElement('div');
+  line.className = 'log-line ' + cls;
+  line.innerHTML = `<span class="ts">${ts}</span>${escHtml(msg)}`;
+  logEl.appendChild(line);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function escHtml(s) { return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+// ─── SHA-256 ───
+async function sha256(buffer) {
+  const hash = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+// ─── Bytes formatting ───
+function fmtBytes(n) {
+  if (n < 1024) return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+
+// ─── Parse .nuspec XML ───
+function parseNuspec(xmlText) {
+  const parser = new DOMParser();
+  const doc = parser.parseFromString(xmlText, 'text/xml');
+  const ns = doc.documentElement.namespaceURI;
+  const q = tag => {
+    const el = doc.getElementsByTagNameNS(ns, tag)[0] || doc.getElementsByTagName(tag)[0];
+    return el ? el.textContent.trim() : '';
+  };
+  const repoEl = doc.getElementsByTagNameNS(ns, 'repository')[0] || doc.getElementsByTagName('repository')[0];
+  let repoUrl = '', repoType = '', repoBranch = '', repoCommit = '';
+  if (repoEl) {
+    repoUrl = repoEl.getAttribute('url') || '';
+    repoType = repoEl.getAttribute('type') || '';
+    repoBranch = repoEl.getAttribute('branch') || '';
+    repoCommit = repoEl.getAttribute('commit') || '';
+  }
+  return {
+    id: q('id'), version: q('version'), authors: q('authors'),
+    description: q('description'), projectUrl: q('projectUrl'),
+    licenseUrl: q('licenseUrl'), license: q('license'),
+    repoUrl, repoType, repoBranch, repoCommit
+  };
+}
+
+// ─── Extract GitHub owner/repo from URL ───
+function extractGitHub(url) {
+  if (!url) return null;
+  const m = url.match(/github\.com\/([^\/]+)\/([^\/\#\?]+?)(?:\.git)?(?:[#?\/]|$)/i);
+  return m ? { owner: m[1], repo: m[2] } : null;
+}
+
+// ─── Fetch NuGet package versions ───
+async function fetchVersions(pkgId) {
+  const url = `https://api.nuget.org/v3-flatcontainer/${pkgId.toLowerCase()}/index.json`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`NuGet returned ${resp.status} for package "${pkgId}". Is the ID correct?`);
+  const data = await resp.json();
+  return data.versions;
+}
+
+// ─── Fetch NuGet package ───
+async function fetchNupkg(pkgId, version) {
+  const id = pkgId.toLowerCase();
+  const ver = version.toLowerCase();
+  const url = `https://api.nuget.org/v3-flatcontainer/${id}/${ver}/${id}.${ver}.nupkg`;
+  log(`GET ${url}`, 'info');
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`Failed to download package: HTTP ${resp.status}`);
+  return await resp.arrayBuffer();
+}
+
+// ─── GitHub API headers ───
+function ghHeaders() {
+  const h = { 'Accept': 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28' };
+  const token = getToken();
+  if (token) h['Authorization'] = `Bearer ${token}`;
+  return h;
+}
+
+// ─── Fetch GitHub attestations ───
+async function fetchAttestations(owner, digest) {
+  const url = `https://api.github.com/users/${owner}/attestations/sha256:${digest}`;
+  log(`GET ${url}`, 'info');
+  const resp = await fetch(url, { headers: ghHeaders() });
+  if (resp.status === 404) return null;
+  if (resp.status === 401) {
+    const body = await resp.text();
+    throw new Error(`GitHub API returned 401 (authentication required). ${getToken() ? 'Your token may be invalid or expired.' : 'Please add a GitHub token in the Authentication section above.'}\n${body}`);
+  }
+  if (!resp.ok) throw new Error(`GitHub API returned ${resp.status}: ${await resp.text()}`);
+  return await resp.json();
+}
+
+// ─── Decode base64url ───
+function base64urlDecode(s) {
+  s = s.replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return atob(s);
+}
+
+// ─── Parse Sigstore bundle ───
+function parseSigstoreBundle(bundle) {
+  const result = { raw: bundle };
+  try {
+    // Extract DSSE envelope
+    const envelope = bundle.dsseEnvelope || bundle.content?.dsseEnvelope;
+    if (envelope) {
+      result.payloadType = envelope.payloadType;
+      if (envelope.payload) {
+        try {
+          const decoded = base64urlDecode(envelope.payload);
+          result.statement = JSON.parse(decoded);
+        } catch { /* binary payload */ }
+      }
+    }
+    // Verification material
+    const vm = bundle.verificationMaterial;
+    if (vm) {
+      // Certificate
+      if (vm.certificate?.rawBytes) {
+        result.certBase64 = vm.certificate.rawBytes;
+      }
+      // Transparency log entries
+      if (vm.tlogEntries?.length) {
+        result.tlogEntries = vm.tlogEntries.map(e => ({
+          logIndex: e.logIndex,
+          integratedTime: e.integratedTime,
+          logId: e.logId?.keyId,
+          kind: e.kindVersion?.kind,
+          version: e.kindVersion?.version,
+          inclusionProof: e.inclusionProof ? {
+            logIndex: e.inclusionProof.logIndex,
+            rootHash: e.inclusionProof.rootHash,
+            treeSize: e.inclusionProof.treeSize,
+            checkpoint: e.inclusionProof.checkpoint
+          } : null
+        }));
+      }
+      // Timestamp verification data
+      if (vm.timestampVerificationData?.rfc3161Timestamps?.length) {
+        result.timestamps = vm.timestampVerificationData.rfc3161Timestamps;
+      }
+    }
+  } catch (e) {
+    result.parseError = e.message;
+  }
+  return result;
+}
+
+// ─── Parse X.509 certificate extensions (best effort, no ASN.1 lib) ───
+function parseCertOIDs(certB64) {
+  // We decode to find GitHub OIDC claim strings embedded in the cert
+  try {
+    const raw = atob(certB64);
+    const info = {};
+    // GitHub OIDC extensions in Fulcio certs contain URIs we can grep for
+    const uriPattern = /https:\/\/github\.com\/[^\x00-\x1f\x7f-\xff]+/g;
+    const uris = raw.match(uriPattern) || [];
+    info.githubUris = [...new Set(uris)];
+    // Find issuer
+    const issuerMatch = raw.match(/https:\/\/token\.actions\.githubusercontent\.com/);
+    info.oidcIssuer = issuerMatch ? issuerMatch[0] : null;
+    return info;
+  } catch { return {}; }
+}
+
+// ─── Surgical ZIP entry removal (byte-identical to `zip -d`) ───
+function removeZipEntry(buffer, entryName) {
+  const bytes = new Uint8Array(buffer);
+  const view = new DataView(buffer);
+
+  // Helper: read little-endian values
+  const u16 = (off) => view.getUint16(off, true);
+  const u32 = (off) => view.getUint32(off, true);
+
+  // ── 1. Find End of Central Directory (scan backwards) ──
+  let eocdOffset = -1;
+  for (let i = bytes.length - 22; i >= 0; i--) {
+    if (u32(i) === 0x06054b50) { eocdOffset = i; break; }
+  }
+  if (eocdOffset === -1) throw new Error('Cannot find EOCD signature — not a valid ZIP');
+
+  const cdEntryCount = u16(eocdOffset + 10);
+  const cdSize       = u32(eocdOffset + 12);
+  const cdOffset     = u32(eocdOffset + 16);
+  const eocdComment  = u16(eocdOffset + 20);
+
+  // ── 2. Parse all central directory entries ──
+  const cdEntries = [];
+  let pos = cdOffset;
+  for (let i = 0; i < cdEntryCount; i++) {
+    if (u32(pos) !== 0x02014b50) throw new Error(`Bad central directory signature at offset ${pos}`);
+    const fnLen    = u16(pos + 28);
+    const exLen    = u16(pos + 30);
+    const cmtLen   = u16(pos + 32);
+    const localOff = u32(pos + 42);
+    const totalLen = 46 + fnLen + exLen + cmtLen;
+    const name     = new TextDecoder().decode(bytes.subarray(pos + 46, pos + 46 + fnLen));
+    cdEntries.push({ name, localOffset: localOff, cdOffset: pos, cdLength: totalLen });
+    pos += totalLen;
+  }
+
+  // ── 3. Find the target entry ──
+  const targetIdx = cdEntries.findIndex(e => e.name === entryName);
+  if (targetIdx === -1) throw new Error(`Entry "${entryName}" not found in ZIP`);
+  const target = cdEntries[targetIdx];
+
+  // ── 4. Determine the byte span of the target's local file record ──
+  // Sort by local offset to find the next entry's start (or CD start)
+  const sortedByLocal = [...cdEntries].sort((a, b) => a.localOffset - b.localOffset);
+  const sortedIdx = sortedByLocal.findIndex(e => e.name === entryName);
+  const localStart = target.localOffset;
+  const localEnd = (sortedIdx < sortedByLocal.length - 1)
+    ? sortedByLocal[sortedIdx + 1].localOffset
+    : cdOffset;
+  const removedLocalSize = localEnd - localStart;
+
+  // ── 5. Build new buffer ──
+  // New local file area: everything before the target + everything after
+  const localBefore = bytes.subarray(0, localStart);
+  const localAfter  = bytes.subarray(localEnd, cdOffset);
+
+  // New central directory: copy entries except target, adjusting offsets
+  const cdChunks = [];
+  let newCdSize = 0;
+  let newCdCount = 0;
+  for (const entry of cdEntries) {
+    if (entry.name === entryName) continue;
+    // Copy the raw CD entry bytes
+    const chunk = new Uint8Array(bytes.subarray(entry.cdOffset, entry.cdOffset + entry.cdLength));
+    // Adjust local header offset if it was after the removed entry
+    if (entry.localOffset > localStart) {
+      const adjView = new DataView(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+      adjView.setUint32(42, entry.localOffset - removedLocalSize, true);
+    }
+    cdChunks.push(chunk);
+    newCdSize += chunk.length;
+    newCdCount++;
+  }
+
+  // New EOCD
+  const newCdOffset = localBefore.length + localAfter.length;
+  const newEocd = new Uint8Array(22 + eocdComment);
+  const eocdView = new DataView(newEocd.buffer);
+  eocdView.setUint32(0, 0x06054b50, true);       // signature
+  eocdView.setUint16(4, 0, true);                 // disk number
+  eocdView.setUint16(6, 0, true);                 // disk with CD
+  eocdView.setUint16(8, newCdCount, true);         // entries on this disk
+  eocdView.setUint16(10, newCdCount, true);        // total entries
+  eocdView.setUint32(12, newCdSize, true);         // CD size
+  eocdView.setUint32(16, newCdOffset, true);       // CD offset
+  eocdView.setUint16(20, eocdComment, true);       // comment length
+  if (eocdComment > 0) {
+    newEocd.set(bytes.subarray(eocdOffset + 22, eocdOffset + 22 + eocdComment), 22);
+  }
+
+  // Concatenate
+  const totalSize = localBefore.length + localAfter.length + newCdSize + newEocd.length;
+  const result = new Uint8Array(totalSize);
+  let offset = 0;
+  result.set(localBefore, offset); offset += localBefore.length;
+  result.set(localAfter, offset);  offset += localAfter.length;
+  for (const chunk of cdChunks) {
+    result.set(chunk, offset); offset += chunk.length;
+  }
+  result.set(newEocd, offset);
+
+  return result.buffer;
+}
+
+// ─── Main verification ───
+async function runVerification() {
+  const btn = document.getElementById('btn-verify');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Verifying…';
+  document.getElementById('log-container').classList.add('visible');
+  document.getElementById('report-container').classList.remove('visible');
+  document.getElementById('report-container').innerHTML = '';
+  logEl.innerHTML = '';
+
+  try {
+    // ── Step 1: Acquire package ──
+    let pkgBuffer, pkgName;
+    const isUpload = document.querySelector('.tab.active').dataset.tab === 'upload';
+
+    if (isUpload) {
+      if (!uploadedFile) throw new Error('No file selected. Please upload a .nupkg file.');
+      log('━━ Step 1: Reading uploaded .nupkg file', 'step');
+      log(`File: ${uploadedFile.name} (${fmtBytes(uploadedFile.size)})`, 'info');
+      pkgBuffer = await uploadedFile.arrayBuffer();
+      pkgName = uploadedFile.name;
+    } else {
+      const pkgId = document.getElementById('pkg-id').value.trim();
+      let pkgVer = document.getElementById('pkg-ver').value.trim();
+      if (!pkgId) throw new Error('Please enter a Package ID.');
+      log('━━ Step 1: Fetching package from NuGet.org', 'step');
+
+      if (!pkgVer) {
+        log(`No version specified — fetching version index for "${pkgId}"…`, 'info');
+        const versions = await fetchVersions(pkgId);
+        pkgVer = versions[versions.length - 1];
+        log(`Latest version: ${pkgVer} (${versions.length} versions available)`, 'data');
+      }
+      log(`Downloading ${pkgId} v${pkgVer} from NuGet.org…`, 'info');
+      pkgBuffer = await fetchNupkg(pkgId, pkgVer);
+      pkgName = `${pkgId.toLowerCase()}.${pkgVer.toLowerCase()}.nupkg`;
+      log(`Downloaded ${fmtBytes(pkgBuffer.byteLength)}`, 'success');
+    }
+
+    // ── Step 2: Compute original SHA-256 ──
+    log('', 'info');
+    log('━━ Step 2: Computing SHA-256 of package as-downloaded (with nuget.org signature)', 'step');
+    const origHash = await sha256(pkgBuffer);
+    log(`SHA-256 (original): ${origHash}`, 'data');
+
+    // ── Step 3: Open ZIP and inspect contents ──
+    log('', 'info');
+    log('━━ Step 3: Opening ZIP archive and inspecting contents', 'step');
+    const zip = await JSZip.loadAsync(pkgBuffer);
+    const entries = [];
+    let hasSignature = false;
+    let nuspecContent = null;
+    let nuspecName = null;
+
+    zip.forEach((path, entry) => {
+      entries.push({ path, size: entry._data?.uncompressedSize || 0, dir: entry.dir });
+      if (path === '.signature.p7s') hasSignature = true;
+      if (path.endsWith('.nuspec') && !path.includes('/')) {
+        nuspecName = path;
+      }
+    });
+
+    log(`Archive contains ${entries.length} entries`, 'info');
+    entries.forEach(e => {
+      const tag = e.path === '.signature.p7s' ? ' ← nuget.org repository signature' : '';
+      log(`  ${e.path}${tag}`, e.path === '.signature.p7s' ? 'warn' : 'info');
+    });
+
+    if (hasSignature) {
+      log(`Found .signature.p7s — this is the nuget.org repository signature that modifies the package hash`, 'warn');
+    } else {
+      log(`No .signature.p7s found — package appears to be unsigned (original build artifact?)`, 'info');
+    }
+
+    // ── Step 4: Extract .nuspec metadata ──
+    log('', 'info');
+    log('━━ Step 4: Extracting package metadata from .nuspec', 'step');
+    let nuspec = null;
+    if (nuspecName) {
+      nuspecContent = await zip.file(nuspecName).async('string');
+      nuspec = parseNuspec(nuspecContent);
+      log(`Package ID:  ${nuspec.id}`, 'data');
+      log(`Version:     ${nuspec.version}`, 'data');
+      log(`Authors:     ${nuspec.authors}`, 'data');
+      if (nuspec.repoUrl) {
+        log(`Repository:  ${nuspec.repoUrl}`, 'data');
+        if (nuspec.repoCommit) log(`Commit:      ${nuspec.repoCommit}`, 'data');
+      }
+      if (nuspec.projectUrl) log(`Project URL: ${nuspec.projectUrl}`, 'data');
+    } else {
+      log('No .nuspec found in archive root — metadata extraction skipped', 'warn');
+    }
+
+    // ── Step 5: Remove .signature.p7s and recompute hash ──
+    log('', 'info');
+    log('━━ Step 5: Removing .signature.p7s to restore original build digest', 'step');
+    let unsignedHash;
+    if (hasSignature) {
+      log('Surgically removing .signature.p7s from the ZIP archive (binary, no re-compression)…', 'info');
+      log('This performs the same operation as Linux "zip -d" — byte-identical output.', 'info');
+      const unsignedBuffer = removeZipEntry(pkgBuffer, '.signature.p7s');
+      unsignedHash = await sha256(unsignedBuffer);
+      log(`SHA-256 (signature removed): ${unsignedHash}`, 'data');
+      log(`Removed ${fmtBytes(pkgBuffer.byteLength - unsignedBuffer.byteLength)} (signature entry + central directory overhead)`, 'info');
+    } else {
+      unsignedHash = origHash;
+      log('No signature to remove — using original hash as-is.', 'info');
+    }
+
+    // ── Step 6: Determine GitHub owner ──
+    log('', 'info');
+    log('━━ Step 6: Determining GitHub owner for attestation lookup', 'step');
+    let ghOwner = document.getElementById('gh-owner').value.trim();
+    let ghInfo = null;
+    if (!ghOwner && nuspec) {
+      ghInfo = extractGitHub(nuspec.repoUrl) || extractGitHub(nuspec.projectUrl);
+      if (ghInfo) {
+        ghOwner = ghInfo.owner;
+        log(`Auto-detected from .nuspec: owner="${ghInfo.owner}", repo="${ghInfo.repo}"`, 'success');
+      }
+    } else if (ghOwner) {
+      log(`Using manually specified owner: "${ghOwner}"`, 'info');
+      ghInfo = nuspec ? (extractGitHub(nuspec.repoUrl) || extractGitHub(nuspec.projectUrl)) : null;
+    }
+    if (!ghOwner) {
+      throw new Error('Could not determine GitHub owner. Please enter it manually in the "GitHub Owner" field.');
+    }
+
+    // ── Step 7: Query GitHub Attestation API ──
+    log('', 'info');
+    log('━━ Step 7: Querying GitHub Attestation API', 'step');
+
+    if (!getToken()) {
+      log('⚠ No GitHub token set — API calls may fail with 401', 'warn');
+    }
+
+    log(`Searching attestations for owner "${ghOwner}"…`, 'info');
+
+    let attestResult = null;
+    let matchedDigest = null;
+
+    // Build list of distinct digests to query
+    const digestsToQuery = [unsignedHash];
+    if (hasSignature && origHash !== unsignedHash) digestsToQuery.push(origHash);
+
+    for (const digest of digestsToQuery) {
+      const label = digest === unsignedHash ? 'signature-removed' : 'original with signature';
+      log(`Query: sha256:${digest} (${label})`, 'info');
+      const result = await fetchAttestations(ghOwner, digest);
+      if (result?.attestations?.length) {
+        attestResult = result;
+        matchedDigest = digest;
+        log(`✓ Found ${result.attestations.length} attestation(s) matching ${label} digest!`, 'success');
+        break;
+      } else {
+        log(`No attestations found for ${label} digest.`, 'warn');
+      }
+    }
+
+    // ── Step 8: Parse and analyze attestations ──
+    log('', 'info');
+    log('━━ Step 8: Analyzing attestation data', 'step');
+
+    const attestations = [];
+    if (attestResult?.attestations?.length) {
+      for (const att of attestResult.attestations) {
+        const bundle = att.bundle;
+        const parsed = parseSigstoreBundle(bundle);
+        const certInfo = parsed.certBase64 ? parseCertOIDs(parsed.certBase64) : {};
+        attestations.push({ bundle, parsed, certInfo, repositoryId: att.repository_id });
+        log(`Attestation: mediaType=${bundle.mediaType || 'unknown'}`, 'data');
+        if (parsed.statement) {
+          log(`  predicateType: ${parsed.statement.predicateType || 'unknown'}`, 'data');
+          if (parsed.statement.predicate?.buildDefinition?.externalParameters?.workflow) {
+            const wf = parsed.statement.predicate.buildDefinition.externalParameters.workflow;
+            log(`  workflow: ${wf.path || ''}@${wf.ref || ''}`, 'data');
+            log(`  repository: ${wf.repository || ''}`, 'data');
+          }
+          if (parsed.statement.predicate?.runDetails?.builder?.id) {
+            log(`  builder: ${parsed.statement.predicate.runDetails.builder.id}`, 'data');
+          }
+          if (parsed.statement.predicate?.runDetails?.metadata?.invocationId) {
+            log(`  invocationId: ${parsed.statement.predicate.runDetails.metadata.invocationId}`, 'data');
+          }
+        }
+        if (parsed.tlogEntries?.length) {
+          const e = parsed.tlogEntries[0];
+          const time = e.integratedTime ? new Date(Number(e.integratedTime) * 1000).toISOString() : 'unknown';
+          log(`  transparency log: index=${e.logIndex}, time=${time}, kind=${e.kind}/${e.version}`, 'data');
+        }
+        if (certInfo.oidcIssuer) {
+          log(`  OIDC issuer: ${certInfo.oidcIssuer}`, 'data');
+        }
+        if (certInfo.githubUris?.length) {
+          certInfo.githubUris.forEach(u => log(`  cert URI: ${u}`, 'data'));
+        }
+      }
+    } else {
+      log('No attestations to analyze.', 'warn');
+    }
+
+    // ── Step 9: Build verification checks ──
+    log('', 'info');
+    log('━━ Step 9: Verification summary', 'step');
+
+    const checks = [];
+
+    // Check 1: Signature presence
+    checks.push({
+      pass: true, // informational
+      label: hasSignature
+        ? 'NuGet.org repository signature (.signature.p7s) was present and removed'
+        : 'No repository signature found — package may be the original build artifact',
+      detail: hasSignature
+        ? 'The signature was removed to restore the original build digest, matching the attestation subject.'
+        : ''
+    });
+
+    // Check 2: Attestation found
+    const attFound = attestations.length > 0;
+    checks.push({
+      pass: attFound,
+      label: attFound
+        ? `${attestations.length} attestation(s) found for digest sha256:${matchedDigest?.slice(0, 16)}…`
+        : 'No attestations found on GitHub for this package digest',
+      detail: attFound ? '' : 'The package may not have attestations, or the GitHub owner is incorrect.'
+    });
+
+    // Check 3: Predicate type
+    if (attFound) {
+      const pt = attestations[0].parsed.statement?.predicateType;
+      const isSLSA = pt === 'https://slsa.dev/provenance/v1';
+      checks.push({
+        pass: isSLSA,
+        label: isSLSA
+          ? 'Predicate type matches SLSA Provenance v1'
+          : `Predicate type: ${pt || 'unknown'}`,
+        detail: pt || ''
+      });
+    }
+
+    // Check 4: OIDC Issuer
+    if (attFound && attestations[0].certInfo.oidcIssuer) {
+      const isGH = attestations[0].certInfo.oidcIssuer === 'https://token.actions.githubusercontent.com';
+      checks.push({
+        pass: isGH,
+        label: isGH
+          ? 'OIDC issuer is GitHub Actions'
+          : `OIDC issuer: ${attestations[0].certInfo.oidcIssuer}`,
+        detail: attestations[0].certInfo.oidcIssuer
+      });
+    }
+
+    // Check 5: Transparency log
+    if (attFound && attestations[0].parsed.tlogEntries?.length) {
+      const e = attestations[0].parsed.tlogEntries[0];
+      checks.push({
+        pass: true,
+        label: `Transparency log entry found (index: ${e.logIndex})`,
+        detail: `Integrated at ${new Date(Number(e.integratedTime) * 1000).toISOString()}`
+      });
+      if (e.inclusionProof) {
+        checks.push({
+          pass: true,
+          label: 'Inclusion proof present in transparency log entry',
+          detail: `Tree size: ${e.inclusionProof.treeSize}, log index: ${e.inclusionProof.logIndex}`
+        });
+      }
+    }
+
+    // Check 6: Source repo match
+    if (attFound && attestations[0].certInfo.githubUris?.length) {
+      // Prefer the workflow repo from the attestation itself, fall back to nuspec
+      const wfRepo = attestations[0].parsed.statement?.predicate?.buildDefinition?.externalParameters?.workflow?.repository;
+      const sanGhInfo = (wfRepo ? extractGitHub(wfRepo) : null) || ghInfo;
+      if (sanGhInfo) {
+        const expectedPrefix = `https://github.com/${sanGhInfo.owner}/${sanGhInfo.repo}`;
+        const match = attestations[0].certInfo.githubUris.some(u => u.toLowerCase().startsWith(expectedPrefix.toLowerCase()));
+        checks.push({
+          pass: match,
+          label: match
+            ? `Certificate SAN references ${sanGhInfo.owner}/${sanGhInfo.repo}`
+            : 'Certificate SAN does not reference the expected repository',
+          detail: attestations[0].certInfo.githubUris.join(', ')
+        });
+      }
+    }
+
+    checks.forEach(c => {
+      log(`  ${c.pass ? '✓' : '✗'} ${c.label}`, c.pass ? 'success' : 'error');
+      if (c.detail) log(`    ${c.detail}`, 'info');
+    });
+
+    const allPass = checks.every(c => c.pass);
+    const anyFail = checks.some(c => !c.pass);
+    log('', 'info');
+    if (attFound && !anyFail) {
+      log('✓ Verification succeeded — attestation found and checks passed.', 'success');
+    } else if (attFound) {
+      log('⚠ Attestation found but some checks did not pass.', 'warn');
+    } else {
+      log('✗ No attestation found for this package.', 'error');
+    }
+    log('', 'info');
+    log('Note: Full cryptographic verification (certificate chain, DSSE signature,', 'info');
+    log('Rekor inclusion) requires sigstore-js or the GitHub CLI. This tool performs', 'info');
+    log('digest matching and metadata inspection against the GitHub attestation API.', 'info');
+
+    // ── Build Report ──
+    buildReport({
+      pkgName, nuspec, entries, hasSignature, origHash, unsignedHash,
+      matchedDigest, attestations, checks, ghOwner, ghInfo, attFound
+    });
+
+  } catch (err) {
+    log(`ERROR: ${err.message}`, 'error');
+    console.error(err);
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg> Verify Provenance`;
+  }
+}
+
+// ─── Build Report HTML ───
+function buildReport(data) {
+  const { pkgName, nuspec, entries, hasSignature, origHash, unsignedHash,
+          matchedDigest, attestations, checks, ghOwner, ghInfo, attFound } = data;
+  const rc = document.getElementById('report-container');
+  rc.classList.add('visible');
+
+  const allPass = attFound && checks.every(c => c.pass);
+  const verdictClass = allPass ? 'pass' : (attFound ? 'partial' : 'fail');
+  const verdictIcon = allPass ? '✓' : (attFound ? '⚠' : '✗');
+  const verdictLabel = allPass ? 'Provenance Verified' : (attFound ? 'Review Needed' : 'No Attestation Found');
+
+  // Build a descriptive subtitle
+  let verdictDetail = '';
+  const pkgLabel = nuspec ? `${nuspec.id} ${nuspec.version}` : pkgName;
+  if (allPass && attestations.length) {
+    const st = attestations[0].parsed.statement;
+    const wf = st?.predicate?.buildDefinition?.externalParameters?.workflow;
+    const buildRepo = wf?.repository ? extractGitHub(wf.repository) : null;
+    const repoLabel = buildRepo ? `${buildRepo.owner}/${buildRepo.repo}` : ghOwner;
+    verdictDetail = `${pkgLabel} was built from a GitHub Actions pipeline in ${repoLabel}`;
+  } else if (attFound) {
+    verdictDetail = `Attestation found for ${pkgLabel} but some checks did not pass`;
+  } else {
+    verdictDetail = `No provenance attestation found for ${pkgLabel}`;
+  }
+
+  let html = '';
+
+  // ── Verdict ──
+  html += `<div class="verdict-card ${verdictClass}">
+    <span class="verdict-badge ${verdictClass}">${verdictIcon} ${verdictLabel}</span>
+    <div class="verdict-detail">${escHtml(verdictDetail)}</div>
+  </div>`;
+
+  // ── Package Info ──
+  html += `<div class="report-section">
+    <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18M9 21V9"/></svg> Package Information</div>
+    <div class="report-section-body"><table class="kv-table">
+      <tr><td class="kv-key">File</td><td class="kv-val">${escHtml(pkgName)}</td></tr>`;
+  if (nuspec) {
+    html += `<tr><td class="kv-key">Package ID</td><td class="kv-val">${escHtml(nuspec.id)}</td></tr>
+      <tr><td class="kv-key">Version</td><td class="kv-val">${escHtml(nuspec.version)}</td></tr>
+      <tr><td class="kv-key">Authors</td><td class="kv-val">${escHtml(nuspec.authors)}</td></tr>`;
+    if (nuspec.repoUrl) {
+      html += `<tr><td class="kv-key">Repository</td><td class="kv-val"><a href="${escHtml(nuspec.repoUrl)}" target="_blank">${escHtml(nuspec.repoUrl)}</a></td></tr>`;
+    }
+    if (nuspec.repoCommit) {
+      html += `<tr><td class="kv-key">Commit</td><td class="kv-val"><span class="hash">${escHtml(nuspec.repoCommit)}</span></td></tr>`;
+    }
+    if (nuspec.projectUrl) {
+      html += `<tr><td class="kv-key">Project URL</td><td class="kv-val"><a href="${escHtml(nuspec.projectUrl)}" target="_blank">${escHtml(nuspec.projectUrl)}</a></td></tr>`;
+    }
+  }
+  html += `</table></div></div>`;
+
+  // ── Digest Comparison ──
+  html += `<div class="report-section">
+    <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> Digest Analysis</div>
+    <div class="report-section-body"><table class="kv-table">
+      <tr><td class="kv-key">Original SHA-256</td><td class="kv-val"><span class="hash">${origHash}</span></td></tr>`;
+  if (hasSignature) {
+    html += `<tr><td class="kv-key">After .signature.p7s removal</td><td class="kv-val"><span class="hash">${unsignedHash}</span></td></tr>
+      <tr><td class="kv-key">Hashes differ?</td><td class="kv-val" style="color:var(--amber)">Yes — nuget.org's signature changed the package hash</td></tr>`;
+  } else {
+    html += `<tr><td class="kv-key">.signature.p7s</td><td class="kv-val">Not present</td></tr>`;
+  }
+  if (matchedDigest) {
+    html += `<tr><td class="kv-key">Matched digest</td><td class="kv-val" style="color:var(--green)"><span class="hash">${matchedDigest}</span></td></tr>`;
+  }
+  html += `</table></div></div>`;
+
+  // ── Archive Contents ──
+  html += `<div class="report-section">
+    <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg> Archive Contents (${entries.length} entries)</div>
+    <div class="report-section-body">
+      <button class="collapsible-toggle" onclick="this.nextElementSibling.classList.toggle('open');this.textContent=this.nextElementSibling.classList.contains('open')?'▾ Hide file list':'▸ Show file list'">▸ Show file list</button>
+      <div class="collapsible-content"><div class="file-list" style="margin-top:0.5rem">`;
+  entries.forEach(e => {
+    const cls = e.path === '.signature.p7s' ? 'sig-file' : '';
+    html += `<span class="fname ${cls}">${escHtml(e.path)}</span><span class="fsize">${e.dir ? '—' : ''}</span>`;
+  });
+  html += `</div></div></div></div>`;
+
+  // ── Verification Checks ──
+  html += `<div class="report-section">
+    <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg> Verification Checks</div>
+    <div class="report-section-body">`;
+  checks.forEach(c => {
+    const color = c.pass ? 'var(--green)' : 'var(--red)';
+    const icon = c.pass
+      ? `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M9 12l2 2 4-4"/></svg>`
+      : `<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="${color}" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>`;
+    html += `<div class="check-row">
+      <span class="check-icon">${icon}</span>
+      <div><div class="check-label">${escHtml(c.label)}</div>
+        ${c.detail ? `<div class="check-detail">${escHtml(c.detail)}</div>` : ''}
+      </div></div>`;
+  });
+  html += `</div></div>`;
+
+  // ── Attestation Details ──
+  if (attestations.length) {
+    attestations.forEach((att, i) => {
+      const st = att.parsed.statement;
+      const pred = st?.predicate;
+
+      html += `<div class="report-section">
+        <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 10h6M9 14h6M9 18h4"/></svg> Attestation #${i + 1}</div>
+        <div class="report-section-body"><table class="kv-table">
+          <tr><td class="kv-key">Media Type</td><td class="kv-val">${escHtml(att.bundle.mediaType || 'unknown')}</td></tr>
+          <tr><td class="kv-key">Payload Type</td><td class="kv-val">${escHtml(att.parsed.payloadType || 'unknown')}</td></tr>`;
+
+      if (st) {
+        html += `<tr><td class="kv-key">Predicate Type</td><td class="kv-val"><a href="${escHtml(st.predicateType || '')}" target="_blank">${escHtml(st.predicateType || 'unknown')}</a></td></tr>`;
+
+        // Subject
+        if (st.subject?.length) {
+          st.subject.forEach(s => {
+            html += `<tr><td class="kv-key">Subject</td><td class="kv-val">${escHtml(s.name || 'unnamed')}`;
+            if (s.digest?.sha256) html += `<br><span class="hash">sha256:${escHtml(s.digest.sha256)}</span>`;
+            html += `</td></tr>`;
+          });
+        }
+
+        // Build definition
+        if (pred?.buildDefinition?.externalParameters?.workflow) {
+          const wf = pred.buildDefinition.externalParameters.workflow;
+          html += `<tr><td class="kv-key">Build Workflow</td><td class="kv-val">${escHtml(wf.path || '')}@${escHtml(wf.ref || '')}</td></tr>`;
+          if (wf.repository) {
+            html += `<tr><td class="kv-key">Build Repository</td><td class="kv-val"><a href="${escHtml(wf.repository)}" target="_blank">${escHtml(wf.repository)}</a></td></tr>`;
+          }
+        }
+
+        // Internal parameters
+        if (pred?.buildDefinition?.internalParameters?.github) {
+          const gh = pred.buildDefinition.internalParameters.github;
+          if (gh.event_name) html += `<tr><td class="kv-key">Event</td><td class="kv-val">${escHtml(gh.event_name)}</td></tr>`;
+          if (gh.repository_id) html += `<tr><td class="kv-key">Repository ID</td><td class="kv-val">${escHtml(gh.repository_id)}</td></tr>`;
+          if (gh.repository_owner_id) html += `<tr><td class="kv-key">Owner ID</td><td class="kv-val">${escHtml(gh.repository_owner_id)}</td></tr>`;
+        }
+
+        // Resolved dependencies
+        if (pred?.buildDefinition?.resolvedDependencies?.length) {
+          pred.buildDefinition.resolvedDependencies.forEach(dep => {
+            html += `<tr><td class="kv-key">Source</td><td class="kv-val"><a href="${escHtml(dep.uri || '')}" target="_blank">${escHtml(dep.uri || '')}</a>`;
+            if (dep.digest?.gitCommit) html += `<br><span class="hash">commit: ${escHtml(dep.digest.gitCommit)}</span>`;
+            html += `</td></tr>`;
+          });
+        }
+
+        // Run details
+        if (pred?.runDetails) {
+          if (pred.runDetails.builder?.id) {
+            html += `<tr><td class="kv-key">Builder</td><td class="kv-val"><a href="${escHtml(pred.runDetails.builder.id)}" target="_blank">${escHtml(pred.runDetails.builder.id)}</a></td></tr>`;
+          }
+          if (pred.runDetails.metadata?.invocationId) {
+            html += `<tr><td class="kv-key">Invocation</td><td class="kv-val"><a href="${escHtml(pred.runDetails.metadata.invocationId)}" target="_blank">${escHtml(pred.runDetails.metadata.invocationId)}</a></td></tr>`;
+          }
+        }
+      }
+
+      // Transparency log
+      if (att.parsed.tlogEntries?.length) {
+        const e = att.parsed.tlogEntries[0];
+        const time = e.integratedTime ? new Date(Number(e.integratedTime) * 1000).toISOString() : 'unknown';
+        html += `<tr><td class="kv-key">TLog Index</td><td class="kv-val">${escHtml(String(e.logIndex || ''))}</td></tr>`;
+        html += `<tr><td class="kv-key">TLog Time</td><td class="kv-val">${escHtml(time)}</td></tr>`;
+        html += `<tr><td class="kv-key">TLog Kind</td><td class="kv-val">${escHtml(e.kind || '')}/${escHtml(e.version || '')}</td></tr>`;
+      }
+
+      // Cert info
+      if (att.certInfo?.oidcIssuer) {
+        html += `<tr><td class="kv-key">OIDC Issuer</td><td class="kv-val">${escHtml(att.certInfo.oidcIssuer)}</td></tr>`;
+      }
+      if (att.certInfo?.githubUris?.length) {
+        html += `<tr><td class="kv-key">Certificate URIs</td><td class="kv-val">${att.certInfo.githubUris.map(u => `<a href="${escHtml(u)}" target="_blank">${escHtml(u)}</a>`).join('<br>')}</td></tr>`;
+      }
+
+      html += `</table>`;
+
+      // Derive repo from attestation workflow if available, else nuspec
+      const wfRepo = st?.predicate?.buildDefinition?.externalParameters?.workflow?.repository;
+      const attGhInfo = wfRepo ? extractGitHub(wfRepo) : null;
+      const linkInfo = attGhInfo || ghInfo;
+
+      // Attestation links
+      if (linkInfo) {
+        html += `<a class="attest-link" href="https://github.com/${escHtml(linkInfo.owner)}/${escHtml(linkInfo.repo)}/attestations" target="_blank">
+          <span class="al-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--blue)" stroke-width="1.5"><path d="M18 13v6a2 2 0 01-2 2H5a2 2 0 01-2-2V8a2 2 0 012-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg></span>
+          <div><div class="al-text">View attestations on GitHub</div><div class="al-sub">${linkInfo.owner}/${linkInfo.repo}/attestations</div></div>
+        </a>`;
+      }
+
+      // Run link
+      if (pred?.runDetails?.metadata?.invocationId) {
+        html += `<a class="attest-link" href="${escHtml(pred.runDetails.metadata.invocationId)}" target="_blank">
+          <span class="al-icon"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--green)" stroke-width="1.5"><path d="M12 2L3 7v6c0 5.25 3.75 10.15 9 11.25C17.25 23.15 21 18.25 21 13V7l-9-5z"/><path d="M9 12l2 2 4-4"/></svg></span>
+          <div><div class="al-text">View GitHub Actions build run</div><div class="al-sub">${escHtml(pred.runDetails.metadata.invocationId)}</div></div>
+        </a>`;
+      }
+
+      // Raw predicate JSON
+      if (st) {
+        html += `<div style="margin-top:0.75rem">
+          <button class="collapsible-toggle" onclick="this.nextElementSibling.classList.toggle('open');this.textContent=this.nextElementSibling.classList.contains('open')?'▾ Hide raw statement':'▸ Show raw statement'">▸ Show raw statement</button>
+          <div class="collapsible-content"><div class="json-block"><pre>${escHtml(JSON.stringify(st, null, 2))}</pre></div></div>
+        </div>`;
+      }
+
+      html += `</div></div>`;
+    });
+  }
+
+  // ── Methodology ──
+  html += `<div class="report-section">
+    <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg> Methodology &amp; Limitations</div>
+    <div class="report-section-body" style="font-size:0.82rem;color:var(--text-dim);line-height:1.7">
+      <p>This tool performs the following steps to check NuGet package provenance:</p>
+      <p style="margin-top:0.5rem"><strong style="color:var(--text)">1.</strong> Acquires the .nupkg (via upload or NuGet.org download).</p>
+      <p><strong style="color:var(--text)">2.</strong> Opens the ZIP archive and removes <code>.signature.p7s</code> — the repository signature nuget.org adds during upload — to restore the original build digest.</p>
+      <p><strong style="color:var(--text)">3.</strong> Computes SHA-256 of the modified archive.</p>
+      <p><strong style="color:var(--text)">4.</strong> Queries <code>GET /users/{owner}/attestations/sha256:{digest}</code> on the GitHub API.</p>
+      <p><strong style="color:var(--text)">5.</strong> Parses the Sigstore bundle to extract the in-toto statement, predicate, certificate URIs, and transparency log data.</p>
+      <p style="margin-top:0.75rem"><strong style="color:var(--amber)">Limitations:</strong></p>
+      <p>• The signature removal uses binary ZIP surgery (no re-compression), producing output byte-identical to <code>zip&nbsp;-d</code> on Linux. For CLI-based full verification: <code>zip -d pkg.nupkg .signature.p7s && gh attestation verify --owner OWNER pkg.nupkg</code></p>
+      <p>• This tool does <em>not</em> perform full cryptographic verification (Fulcio certificate chain, DSSE signature validation, Rekor inclusion proof). Use <code>gh attestation verify</code> or <code>sigstore-js</code> for that.</p>
+      <p>• A GitHub personal access token is required for API authentication.</p>
+      <p style="margin-top:0.75rem">Reference: <a href="https://andrewlock.net/creating-provenance-attestations-for-nuget-packages-in-github-actions/" target="_blank" style="color:var(--blue)">Andrew Lock — Creating provenance attestations for NuGet packages in GitHub Actions</a></p>
+    </div></div>`;
+
+  rc.innerHTML = html;
+}
+</script>
+</body>
+</html>
