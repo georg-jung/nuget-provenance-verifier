@@ -16,7 +16,11 @@ jobs:
 
       - name: Validate index.html
         run: |
+          # Build the pinned validator wrapper image from .github/validator so
+          # Dependabot can update the GHCR base image digest for us.
+          docker build --tag local/validator:latest .github/validator
+          # Keep the repository bind mount read-only while validating index.html.
           docker run --rm \
             -v "$PWD:/data:ro" \
-            ghcr.io/validator/validator:latest \
+            local/validator:latest \
             vnu --skip-non-html /data/index.html
