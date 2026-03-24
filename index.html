@@ -1052,7 +1052,10 @@ function ghHeaders() {
 
 // ─── Fetch GitHub attestations ───
 async function fetchAttestations(owner, digest) {
-  const url = `https://api.github.com/users/${owner}/attestations/sha256:${digest}`;
+  const url = new URL(`https://api.github.com/users/${owner}/attestations/sha256:${digest}`);
+  // This tool inspects build provenance attestations specifically.
+  url.searchParams.set('predicate_type', 'provenance');
+  url.searchParams.set('per_page', '100');
   log(`GET ${url}`, 'info');
   const resp = await fetch(url, { headers: ghHeaders() });
   if (resp.status === 404) return null;
@@ -1061,6 +1064,21 @@ async function fetchAttestations(owner, digest) {
     throw new Error(`GitHub API returned 401 (authentication required). ${getToken() ? 'Your token may be invalid or expired.' : 'Please add a GitHub token in the Authentication section above.'}\n${body}`);
   }
   if (!resp.ok) throw new Error(`GitHub API returned ${resp.status}: ${await resp.text()}`);
+  return await resp.json();
+}
+
+// Compatibility helper: newer GitHub API versions return bundle metadata plus bundle_url
+async function resolveAttestationBundle(attestation) {
+  if (attestation?.bundle) return attestation.bundle;
+  if (!attestation?.bundle_url) {
+    throw new Error('Attestation response did not include an inline bundle or bundle_url');
+  }
+
+  log(`GET ${attestation.bundle_url}`, 'info');
+  const resp = await fetch(attestation.bundle_url);
+  if (!resp.ok) {
+    throw new Error(`Failed to download attestation bundle: HTTP ${resp.status}`);
+  }
   return await resp.json();
 }
 
@@ -1407,11 +1425,29 @@ async function runVerification() {
     const attestations = [];
     if (attestResult?.attestations?.length) {
       for (const att of attestResult.attestations) {
-        const bundle = att.bundle;
+        let bundle = null;
+        try {
+          bundle = await resolveAttestationBundle(att);
+        } catch (e) {
+          log(`Failed to resolve attestation bundle: ${e.message}`, 'error');
+        }
         const parsed = parseSigstoreBundle(bundle);
         const certInfo = parsed.certBase64 ? parseCertOIDs(parsed.certBase64) : {};
-        attestations.push({ bundle, parsed, certInfo, repositoryId: att.repository_id });
-        log(`Attestation: mediaType=${bundle.mediaType || 'unknown'}`, 'data');
+        attestations.push({
+          bundle,
+          parsed,
+          certInfo,
+          repositoryId: att.repository_id,
+          initiator: att.initiator || null,
+          bundleUrl: att.bundle_url || null
+        });
+        log(`Attestation: mediaType=${bundle?.mediaType || 'unknown'}`, 'data');
+        if (att.repository_id) {
+          log(`  repositoryId: ${att.repository_id}`, 'data');
+        }
+        if (att.initiator) {
+          log(`  initiator: ${att.initiator}`, 'data');
+        }
         if (parsed.statement) {
           log(`  predicateType: ${parsed.statement.predicateType || 'unknown'}`, 'data');
           if (parsed.statement.predicate?.buildDefinition?.externalParameters?.workflow) {
@@ -1538,7 +1574,7 @@ async function runVerification() {
     const anyFail = checks.some(c => !c.pass);
     log('', 'info');
     if (attFound && !anyFail) {
-      log('✓ Verification succeeded — attestation found and checks passed.', 'success');
+      log('✓ Provenance attestation matched and metadata checks passed.', 'success');
     } else if (attFound) {
       log('⚠ Attestation found but some checks did not pass.', 'warn');
     } else {
@@ -1574,7 +1610,7 @@ function buildReport(data) {
   const allPass = attFound && checks.every(c => c.pass);
   const verdictClass = allPass ? 'pass' : (attFound ? 'partial' : 'fail');
   const verdictIcon = allPass ? '✓' : (attFound ? '⚠' : '✗');
-  const verdictLabel = allPass ? 'Provenance Verified' : (attFound ? 'Review Needed' : 'No Attestation Found');
+  const verdictLabel = allPass ? 'Provenance Attestation Matched' : (attFound ? 'Review Needed' : 'No Attestation Found');
 
   // Build a descriptive subtitle
   let verdictDetail = '';
@@ -1674,8 +1710,18 @@ function buildReport(data) {
       html += `<div class="report-section">
         <div class="report-section-header"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M9 10h6M9 14h6M9 18h4"/></svg> Attestation #${i + 1}</div>
         <div class="report-section-body"><table class="kv-table">
-          <tr><td class="kv-key">Media Type</td><td class="kv-val">${escHtml(att.bundle.mediaType || 'unknown')}</td></tr>
+          <tr><td class="kv-key">Media Type</td><td class="kv-val">${escHtml(att.bundle?.mediaType || 'unknown')}</td></tr>
           <tr><td class="kv-key">Payload Type</td><td class="kv-val">${escHtml(att.parsed.payloadType || 'unknown')}</td></tr>`;
+
+      if (att.repositoryId) {
+        html += `<tr><td class="kv-key">Repository ID</td><td class="kv-val">${escHtml(String(att.repositoryId))}</td></tr>`;
+      }
+      if (att.initiator) {
+        html += `<tr><td class="kv-key">Initiator</td><td class="kv-val">${escHtml(att.initiator)}</td></tr>`;
+      }
+      if (att.bundleUrl) {
+        html += `<tr><td class="kv-key">Bundle URL</td><td class="kv-val"><a href="${escHtml(att.bundleUrl)}" target="_blank">${escHtml(att.bundleUrl)}</a></td></tr>`;
+      }
 
       if (st) {
         html += `<tr><td class="kv-key">Predicate Type</td><td class="kv-val"><a href="${escHtml(st.predicateType || '')}" target="_blank">${escHtml(st.predicateType || 'unknown')}</a></td></tr>`;
