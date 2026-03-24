@@ -1068,6 +1068,26 @@ async function fetchAttestations(owner, digest) {
 }
 
 // Compatibility helper: newer GitHub API versions return bundle metadata plus bundle_url
+function describeBundleFetchFailure(bundleUrl, err) {
+  const message = err?.message || String(err);
+
+  try {
+    const targetUrl = new URL(bundleUrl, window.location.href);
+    const pageOrigin = window.location.origin;
+    const crossOrigin = pageOrigin === 'null' || targetUrl.origin !== pageOrigin;
+    const looksLikeBrowserNetworkBlock =
+      err instanceof TypeError || /failed to fetch|networkerror|load failed/i.test(message);
+
+    if (crossOrigin && looksLikeBrowserNetworkBlock) {
+      return `Failed to download attestation bundle. This may be caused by a browser CORS restriction on the GitHub-provided bundle URL (${targetUrl.host}). Original error: ${message}`;
+    }
+  } catch {
+    // Fall back to the original error text if URL parsing fails.
+  }
+
+  return `Failed to download attestation bundle: ${message}`;
+}
+
 async function resolveAttestationBundle(attestation) {
   if (attestation?.bundle) return attestation.bundle;
   if (!attestation?.bundle_url) {
@@ -1075,7 +1095,12 @@ async function resolveAttestationBundle(attestation) {
   }
 
   log(`GET ${attestation.bundle_url}`, 'info');
-  const resp = await fetch(attestation.bundle_url);
+  let resp;
+  try {
+    resp = await fetch(attestation.bundle_url);
+  } catch (e) {
+    throw new Error(describeBundleFetchFailure(attestation.bundle_url, e));
+  }
   if (!resp.ok) {
     throw new Error(`Failed to download attestation bundle: HTTP ${resp.status}`);
   }
