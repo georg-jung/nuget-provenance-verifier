@@ -1,8 +1,11 @@
 # NuGet Provenance Verifier
 
+[![Available at](https://img.shields.io/badge/Available%20at-nuget--provenance--verifier.gjung.com-blue)](https://nuget-provenance-verifier.gjung.com/)
+[![CI](https://github.com/georg-jung/nuget-provenance-attestor/actions/workflows/ci.yml/badge.svg)](https://github.com/georg-jung/nuget-provenance-attestor/actions/workflows/ci.yml)
+
 Lightweight browser-based tool for checking GitHub build provenance attestations for NuGet packages.
 
-![NuGet Provenance Verifier screenshot](./screenshot.jpg)
+[![NuGet Provenance Verifier screenshot](./screenshot.jpg)](https://nuget-provenance-verifier.gjung.com/)
 
 It removes the `nuget.org` repository signature from a `.nupkg`, recomputes the digest, and looks up matching attestations through GitHub's attestation API.
 
