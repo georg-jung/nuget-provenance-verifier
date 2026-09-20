@@ -1,7 +1,7 @@
 # NuGet Provenance Verifier
 
 [![Available at](https://img.shields.io/badge/Available%20at-nuget--provenance--verifier.gjung.com-blue)](https://nuget-provenance-verifier.gjung.com/)
-[![CI](https://github.com/georg-jung/nuget-provenance-attestor/actions/workflows/ci.yml/badge.svg)](https://github.com/georg-jung/nuget-provenance-attestor/actions/workflows/ci.yml)
+[![CI](https://github.com/georg-jung/nuget-provenance-verifier/actions/workflows/ci.yml/badge.svg)](https://github.com/georg-jung/nuget-provenance-verifier/actions/workflows/ci.yml)
 
 Lightweight browser-based tool for checking GitHub build provenance attestations for NuGet packages.
 

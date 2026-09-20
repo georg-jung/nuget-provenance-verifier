@@ -12,6 +12,8 @@ Why it exists:
 
 How it is used:
 
-- The workflows build this Dockerfile as `local/validator:latest`.
-- They run `vnu` from that local image against the repository checkout.
+- The `.github/actions/validate-html` composite action builds this Dockerfile
+  as `local/validator:latest`, so the CI and Pages workflows share one copy of
+  the validation step.
+- It runs `vnu` from that local image against the repository checkout.
 - The repository is mounted read-only during validation.

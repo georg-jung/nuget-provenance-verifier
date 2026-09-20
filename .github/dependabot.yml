@@ -4,7 +4,17 @@ updates:
     directory: /.github/validator
     schedule:
       interval: weekly
+    groups:
+      # One PR per week for all validator image updates instead of one per bump.
+      docker:
+        patterns:
+          - "*"
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # One PR per week for all workflow action updates instead of one per bump.
+      github-actions:
+        patterns:
+          - "*"
