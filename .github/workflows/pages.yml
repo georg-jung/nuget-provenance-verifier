@@ -27,15 +27,7 @@ jobs:
         uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - name: Validate index.html
-        run: |
-          # Build the pinned validator wrapper image from .github/validator so
-          # Dependabot can update the GHCR base image digest for us.
-          docker build --tag local/validator:latest .github/validator
-          # Keep the repository bind mount read-only while validating index.html.
-          docker run --rm \
-            -v "$PWD:/data:ro" \
-            local/validator:latest \
-            vnu --skip-non-html /data/index.html
+        uses: ./.github/actions/validate-html
 
       - name: Stage site artifact
         run: |

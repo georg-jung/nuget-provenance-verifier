@@ -1,0 +1,17 @@
+name: Validate HTML
+description: Validates index.html with the digest-pinned Nu Html Checker image.
+
+runs:
+  using: composite
+  steps:
+    - name: Validate index.html
+      shell: bash
+      run: |
+        # Build the pinned validator wrapper image from .github/validator so
+        # Dependabot can update the GHCR base image digest for us.
+        docker build --tag local/validator:latest .github/validator
+        # Keep the repository bind mount read-only while validating index.html.
+        docker run --rm \
+          -v "$PWD:/data:ro" \
+          local/validator:latest \
+          vnu --skip-non-html /data/index.html
